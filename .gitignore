@@ -1,0 +1,16 @@
+# Data — large files not for GitHub
+data/accepted_*.csv
+data/lendingclub*.csv
+data/loan*.csv
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# Streamlit
+.streamlit/secrets.toml
