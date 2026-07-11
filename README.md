@@ -1,9 +1,9 @@
 # Credit Risk Stress-Testing & IFRS 9 Simulator
 
-A UK-focused credit risk modeling application
+A bank-grade UK retail credit risk platform built for interview demonstration and portfolio use.
 
 ## Live Demo
-🔗 **Deploy link** — deploying shortly
+🔗 **Deploy link** — add your Streamlit Cloud URL here after deployment
 
 ## What This Project Does
 
@@ -13,7 +13,7 @@ End-to-end credit risk modelling pipeline covering:
 - **Dynamic LGD** — Driven by loan type, ONS HPI movement, IFRS 9 stage, and macro scenario
 - **Basel III AIRB** — Retail asset correlation (BCBS §328), capital requirement K, RWA, Basel 3.1 output floor
 - **ICAAP Waterfall** — Pillar 1, Pillar 2A, conservation buffer, post-stress CET1 ratio
-- **FCA Consumer Duty** — FG21/1-inspired vulnerability indicators and rule-based decision logic
+- **FCA Consumer Duty** — FG21/1 four-outcome vulnerability framework with hard reject engine
 - **PD Scorecard** — Logistic Regression, Random Forest, Gradient Boosting champion/challenger benchmarking
 - **SQL Analytics** — SQLite backend with portfolio views, segment ECL, model metrics
 - **Macro Scenarios** — BoE-style Base, Adverse, Stress with interactive sidebar shocks
@@ -65,7 +65,7 @@ Place a LendingClub CSV (`loan*.csv` or `accepted_*.csv`) in `data/` for real da
 - **IFRS 9** — IASB ED/2013/3, three-stage expected credit loss model
 - **Basel III AIRB** — BCBS §328, retail asset correlation formula
 - **Basel 3.1** — Output floor at 72.5% of standardised approach (PRA CP16/22)
-- **FCA Consumer Duty** — PS22/9, FG21/1 guidance (conceptual alignment)
+- **FCA Consumer Duty** — PS22/9, FG21/1 vulnerability guidance
 
 ## Author
 Muhammad Usama | MSc FinTech (Distinction), University of Exeter

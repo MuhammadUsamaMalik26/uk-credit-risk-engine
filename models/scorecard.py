@@ -13,14 +13,13 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 NUMERIC_FEATURES = [
     "loan_amount", "current_balance", "term_months", "months_on_book", "interest_rate",
-    "annual_income", "debt_to_income", "credit_score", "missed_payments", "days_past_due"
+    "annual_income", "debt_to_income", "credit_score"
 ]
 CATEGORICAL_FEATURES = ["grade_band", "home_ownership", "purpose"]
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["utilization_proxy"] = (out["current_balance"] / out["loan_amount"]).clip(0, 1.5)
-    out["payment_stress"] = (out["debt_to_income"] * (1 + out["missed_payments"])).clip(0, 10)
     out["score_x_dti"] = (out["credit_score"] / 850.0) * out["debt_to_income"]
     out["seasoning_ratio"] = (out["months_on_book"] / out["term_months"]).clip(0, 1)
     out["rate_minus_score"] = out["interest_rate"] - (out["credit_score"] / 100)
@@ -28,7 +27,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def get_feature_columns(df: pd.DataFrame):
     engineered = engineer_features(df)
-    numeric = NUMERIC_FEATURES + ["utilization_proxy", "payment_stress", "score_x_dti", "seasoning_ratio", "rate_minus_score"]
+    numeric = NUMERIC_FEATURES + ["utilization_proxy", "score_x_dti", "seasoning_ratio", "rate_minus_score"]
     categorical = [c for c in CATEGORICAL_FEATURES if c in engineered.columns]
     return engineered, numeric, categorical
 
