@@ -102,7 +102,7 @@ def _map_lendingclub(csv_path: str, sample_n: int | None = None, random_state: i
         "loan_amount": loan_amount,
         "current_balance": current_balance,
         "term_months": term_months.fillna(36).astype(int),
-        "months_on_book": months_on_book.round().astype(int),
+        "months_on_book": pd.Series(months_on_book, index=raw.index).replace([np.inf, -np.inf], np.nan).fillna(1).clip(lower=1).round().astype(int),
         "interest_rate": interest_rate,
         "annual_income": annual_income,
         "debt_to_income": dti.clip(lower=0, upper=1.2),
@@ -181,6 +181,12 @@ def load_portfolio(data_dir: str | None = None, n: int = 1500, random_state: int
     # Check for sample_loans.csv first (bundled demo data)
     sample_path = os.path.join(data_dir, "sample_loans.csv")
     if os.path.exists(sample_path):
+        # Check if already in synthetic format
+        df_check = pd.read_csv(sample_path, nrows=2)
+        if "default_flag" in df_check.columns and "loan_id" in df_check.columns:
+            df = pd.read_csv(sample_path)
+            meta = {"source": "synthetic_csv", "original_rows": len(df)}
+            return df, meta
         return _map_lendingclub(sample_path, sample_n=n, random_state=random_state)
     csv_path = _find_real_csv(data_dir)
     if csv_path:
