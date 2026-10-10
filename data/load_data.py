@@ -102,7 +102,7 @@ def _map_lendingclub(csv_path: str, sample_n: int | None = None, random_state: i
         "loan_amount": loan_amount,
         "current_balance": current_balance,
         "term_months": term_months.fillna(36).astype(int),
-        "months_on_book": pd.Series(months_on_book, index=raw.index).replace([np.inf, -np.inf], np.nan).fillna(1).clip(lower=1).round().astype(int),
+        "months_on_book": months_on_book.round().astype(int),
         "interest_rate": interest_rate,
         "annual_income": annual_income,
         "debt_to_income": dti.clip(lower=0, upper=1.2),
