@@ -9,7 +9,8 @@ from sklearn.calibration import calibration_curve
 from data.load_data import load_portfolio
 from data.macro_loader import get_boe_scenarios, apply_sidebar_shocks
 from models.scorecard import (
-    train_and_compare_models, score_portfolio, approximate_origination_pd, build_feature_importance
+    train_and_compare_models, score_portfolio, approximate_origination_pd, build_feature_importance,
+    WoEScorecard, calibration_table,
 )
 from models.ecl_engine import run_scenarios, probability_weighted_summary
 from models.basel_lgd import icaap_waterfall, fca_vulnerability_flags
@@ -24,7 +25,7 @@ st.caption(
 
 with st.sidebar:
     st.header("Control Room")
-    selected_model = st.selectbox("Model selector", ["Logistic Regression", "Random Forest", "Gradient Boosting"])
+    selected_model = st.selectbox("Model selector", ["WoE Scorecard", "Logistic Regression", "Random Forest", "Gradient Boosting"])
     unemployment_shift = st.slider("Unemployment rate shock (%)", -1.0, 4.0, 0.0, 0.25)
     gdp_shift = st.slider("GDP growth shock (%)", -4.0, 2.0, 0.0, 0.25)
     rate_shift_bps = st.slider("Bank Rate shock (bps)", -150, 250, 0, 25)
@@ -70,6 +71,10 @@ if run_button or "run_id" not in st.session_state:
     st.session_state["selected_model"] = selected_model
     st.session_state["sicr_threshold"] = sicr_threshold
     st.session_state["calibration_df"] = calibration_df
+    st.session_state["scorecard"] = models["WoE Scorecard"]
+    st.session_state["scorecard_calibration"] = calibration_table(
+        y_test, models["WoE Scorecard"].predict_proba(X_test)[:, 1]
+    )
 
     persist_frame(conn, df, "loans_raw")
     persist_frame(conn, scenarios, "macro_scenarios")
@@ -164,9 +169,15 @@ with tabs[1]:
     st.dataframe(migration_table, use_container_width=True)
 
 with tabs[2]:
+    st.subheader("Champion / challenger — out-of-time validation")
+    st.caption(
+        "Models are trained on older vintages and validated on the most recent 25% of originations "
+        "(out-of-time). PSI compares the score distribution between the two samples (< 0.10 = stable)."
+    )
     st.dataframe(
         metrics.style.format(
-            {"AUC": "{:.3f}", "Recall": "{:.3f}", "Brier": "{:.3f}", "Training Time (s)": "{:.2f}"}
+            {"AUC": "{:.3f}", "Gini": "{:.3f}", "KS": "{:.3f}", "Recall": "{:.3f}", "Brier": "{:.4f}",
+             "Predicted DR": "{:.2%}", "Observed DR": "{:.2%}", "PSI": "{:.3f}", "Training Time (s)": "{:.2f}"}
         ),
         use_container_width=True,
     )
@@ -191,6 +202,32 @@ with tabs[2]:
     )
     cal_fig.update_layout(title=f"Calibration curve — {selected_model}", xaxis_title="Predicted PD", yaxis_title="Observed default rate")
     st.plotly_chart(cal_fig, use_container_width=True)
+
+    scorecard = st.session_state["scorecard"]
+    st.subheader("WoE Scorecard — build and validation")
+    st.caption(
+        f"Points scaling: {scorecard.base_score} points at {scorecard.base_odds}:1 good:bad odds, "
+        f"PDO = {scorecard.pdo}. Lender-assigned grade and interest rate are excluded to avoid circularity; "
+        "no class weighting, so PDs stay calibrated to observed default rates."
+    )
+    c1, c2 = st.columns(2)
+    iv_df = scorecard.iv_table.rename("IV").reset_index().rename(columns={"index": "feature"})
+    iv_df["selected"] = iv_df["feature"].isin(scorecard.features)
+    c1.markdown("**Information Value (feature selection, IV ≥ 0.02)**")
+    c1.dataframe(iv_df.style.format({"IV": "{:.3f}"}), use_container_width=True)
+    c2.markdown("**Out-of-time calibration by PD decile**")
+    c2.dataframe(
+        st.session_state["scorecard_calibration"].style.format({"predicted_pd": "{:.2%}", "observed_dr": "{:.2%}"}),
+        use_container_width=True,
+    )
+    if scorecard.leakage_review:
+        st.warning(f"IV > 0.5 — reviewed for leakage: {', '.join(scorecard.leakage_review)}")
+    if scorecard.sign_flags:
+        st.warning(f"Unexpected coefficient sign: {', '.join(scorecard.sign_flags)}")
+    else:
+        st.success("All scorecard coefficients have the expected sign; WoE bins are monotonic in bad rate.")
+    st.markdown("**Scorecard points table**")
+    st.dataframe(scorecard.points_table(), use_container_width=True)
 
 with tabs[3]:
     st.subheader('Basel III AIRB Capital & ICAAP Waterfall')
@@ -261,8 +298,8 @@ with tabs[5]:
     st.subheader("Assumptions")
     st.markdown(
         """
-        - **PD model**: 12-month PD is estimated from borrower and loan characteristics using Logistic Regression, Random Forest, and Gradient Boosting.
-        - **Primary benchmark**: Logistic Regression is the interpretable baseline; non-linear models are challengers.
+        - **PD model**: 12-month behavioural PD from a WoE logistic regression scorecard (monotonic binning, IV selection, PDO points scaling), benchmarked against Logistic Regression, Random Forest and Gradient Boosting challengers.
+        - **Validation**: out-of-time split on origination date; AUC, Gini, KS, Brier, PSI and decile calibration. No class weighting, so PDs remain calibrated for ECL and capital.
         - **SICR logic**: Stage 2 is triggered when lifetime PD deterioration breaches the selected SICR threshold or when 30+ DPD backstops are hit.
         - **EAD**: Exposure is approximated with an amortizing balance path over the remaining term.
         - **LGD**: LGD is stage-based and stressed upward in adverse and stress scenarios.
