@@ -48,16 +48,19 @@ def test_scorecard_build():
     models, metrics, X_test, y_test = train_and_compare_models(df)
     sc = models["WoE Scorecard"]
     assert isinstance(sc, WoEScorecard)
-    assert "interest_rate" not in sc.features and "grade_band" not in sc.features
-    assert not sc.sign_flags
+    assert "interest_rate" not in sc.features and "grade_band" not in sc.features  # no circular features
+    assert not sc.sign_flags  # all coefficients have the expected sign
+    # monotonic bad rate within every numeric WoE bin set
     for f in sc.features:
         spec = sc.binner.spec[f]
         if spec["type"] == "num":
             d = np.diff(spec["table"]["bad_rate"].values)
             assert (d >= 0).all() or (d <= 0).all()
+    # calibrated: predicted vs observed default rate within 2 percentage points out-of-time
     m = metrics.loc["WoE Scorecard"]
     assert abs(m["Predicted DR"] - m["Observed DR"]) < 0.02
     assert m["Gini"] > 0.2
+    # higher score = lower risk
     scores = sc.score(X_test)
     pds = sc.predict_proba(X_test)[:, 1]
     assert np.corrcoef(scores, pds)[0, 1] < 0
