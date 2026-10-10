@@ -69,3 +69,4 @@ def test_psi_stable_for_same_distribution():
     a, b = rng.normal(size=5000), rng.normal(size=5000)
     assert psi(a, b) < 0.1
     assert psi(a, b + 1.0) > 0.25
+
