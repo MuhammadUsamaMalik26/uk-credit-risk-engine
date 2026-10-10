@@ -298,4 +298,3 @@ def build_feature_importance(model, df: pd.DataFrame) -> pd.DataFrame:
         raw = np.zeros(len(names))
     out = pd.DataFrame({"feature": names, "importance": raw}).sort_values("importance", ascending=False)
     return out.head(15).reset_index(drop=True)
-
