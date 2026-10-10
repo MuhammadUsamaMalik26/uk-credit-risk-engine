@@ -14,13 +14,23 @@ End-to-end credit risk modelling pipeline covering:
 - **Basel III AIRB** — Retail asset correlation (BCBS §328), capital requirement K, RWA, Basel 3.1 output floor
 - **ICAAP Waterfall** — Pillar 1, Pillar 2A, conservation buffer, post-stress CET1 ratio
 - **FCA Consumer Duty** — FG21/1 four-outcome vulnerability framework with hard reject engine
-- **PD Scorecard** — Logistic Regression, Random Forest, Gradient Boosting champion/challenger benchmarking
+- **PD Scorecard** — WoE logistic regression scorecard (monotonic binning, IV selection, PDO points scaling) as champion vs Logistic Regression, Random Forest and Gradient Boosting challengers, validated out-of-time (AUC, Gini, KS, Brier, PSI, decile calibration)
 - **SQL Analytics** — SQLite backend with portfolio views, segment ECL, model metrics
 - **Macro Scenarios** — BoE-style Base, Adverse, Stress with interactive sidebar shocks
 
 ## Key Metrics
-- AUC: **0.84** | Gini: **0.68**
-- Stress ECL uplift: **~16%** (Base → Stress)
+Out-of-time validation on the bundled 5,000-loan portfolio (latest 25% of originations held out):
+
+| Model | AUC | Gini | KS | Brier | PSI |
+|---|---|---|---|---|---|
+| WoE Scorecard (champion) | 0.70 | 0.41 | 0.30 | 0.030 | 0.01 |
+| Logistic Regression | 0.72 | 0.43 | 0.36 | 0.029 | 0.01 |
+| Random Forest | 0.72 | 0.44 | 0.41 | 0.029 | 0.01 |
+| Gradient Boosting | 0.67 | 0.33 | 0.28 | 0.033 | 0.01 |
+
+The scorecard is kept as champion: within ~0.03 Gini of the best challenger while excluding lender-assigned grade and interest rate (circular features), fully interpretable via a points table, and calibrated (predicted 3.6% vs observed 3.1% default rate out-of-time).
+
+- Stress ECL uplift: **~70%** (Base → Stress, default sidebar settings)
 - Basel 3.1 output floor applied at **72.5% of SA RWA**
 
 ## Project Structure
@@ -29,7 +39,7 @@ End-to-end credit risk modelling pipeline covering:
 app.py                  # Streamlit dashboard — 6 interactive tabs
 models/
   ecl_engine.py         # IFRS 9 staging, PD, ECL calculation
-  scorecard.py          # PD model training and benchmarking
+  scorecard.py          # WoE scorecard, PD challengers, out-of-time validation (KS, PSI, calibration)
   basel_lgd.py          # Dynamic LGD, Basel AIRB capital, ICAAP, FCA
 data/
   load_data.py          # LendingClub ingestion + synthetic fallback
@@ -46,7 +56,7 @@ tests/
 |-----|----------|
 | Portfolio Health | Exposure, ECL, stage distribution, grade-band SQL view |
 | Interactive Stress Test | Scenario comparison, stage migration matrix |
-| Model Benchmarking | AUC/Recall/Brier, calibration curve, feature importance |
+| Model Benchmarking | OOT AUC/Gini/KS/Brier/PSI, calibration, IV table, scorecard points table |
 | Basel III Capital & ICAAP | RWA by scenario, CET1 waterfall, stress test pass/fail |
 | FCA Consumer Duty | FG21/1 vulnerability flags, hard reject engine |
 | Methodology & SQL | Assumptions, limitations, live SQL analytics |
