@@ -255,3 +255,69 @@ def run_model_benchmark(df: pd.DataFrame):
     importance = {name: _importance_from_model(model, name, features_test) for name, model in fitted.items()}
     cal = calibration_table(test["default_flag"], predictions["WoE Scorecard"])
     return metrics, pd_12m, importance, cal, champion
+
+
+def out_of_time_split(df: pd.DataFrame, date_col: str = "origination_date", oot_share: float = 0.25):
+    order = pd.to_datetime(df[date_col], errors="coerce").sort_values(kind="mergesort").index
+    cut = int(len(order) * (1 - oot_share))
+    return order[:cut], order[cut:]
+
+
+def train_and_compare_models(df: pd.DataFrame, target_col: str = "default_flag", random_state: int = 42):
+    df_eng, numeric, categorical = get_feature_columns(df)
+    X = df_eng[numeric + categorical]
+    y = df_eng[target_col].astype(int)
+    tr_idx, oot_idx = out_of_time_split(df_eng)
+    X_train, X_test, y_train, y_test = X.loc[tr_idx], X.loc[oot_idx], y.loc[tr_idx], y.loc[oot_idx]
+    prep = ColumnTransformer([
+        ("num", Pipeline([("imp", SimpleImputer(strategy="median")), ("sc", StandardScaler())]), numeric),
+        ("cat", Pipeline([("imp", SimpleImputer(strategy="most_frequent")),
+                          ("oh", OneHotEncoder(handle_unknown="ignore"))]), categorical),
+    ])
+    challengers = {
+        "Logistic Regression": LogisticRegression(max_iter=1000),
+        "Random Forest": RandomForestClassifier(n_estimators=250, max_depth=8, min_samples_leaf=15, random_state=random_state, n_jobs=-1),
+        "Gradient Boosting": GradientBoostingClassifier(random_state=random_state),
+    }
+    results, fitted = {}, {}
+    start = time.perf_counter()
+    sc = WoEScorecard().fit(X_train, y_train, numeric, categorical)
+    p = sc.predict_proba(X_test)[:, 1]
+    results["WoE Scorecard"] = _metrics(y_test, p, time.perf_counter() - start)
+    results["WoE Scorecard"]["PSI"] = psi(sc.score(X_train), sc.score(X_test))
+    fitted["WoE Scorecard"] = sc
+    for name, est in challengers.items():
+        pipe = Pipeline([("prep", prep), ("model", est)])
+        start = time.perf_counter()
+        pipe.fit(X_train, y_train)
+        p_tr, p = pipe.predict_proba(X_train)[:, 1], pipe.predict_proba(X_test)[:, 1]
+        results[name] = _metrics(y_test, p, time.perf_counter() - start)
+        results[name]["PSI"] = psi(p_tr, p)
+        fitted[name] = pipe
+    metrics = pd.DataFrame(results).T.sort_values("Gini", ascending=False)
+    return fitted, metrics, X_test, y_test
+
+
+def score_portfolio(model, df: pd.DataFrame) -> pd.Series:
+    engineered, numeric, categorical = get_feature_columns(df)
+    return pd.Series(model.predict_proba(engineered[numeric + categorical])[:, 1], index=df.index, name="pd_12m")
+
+
+def approximate_origination_pd(current_pd: pd.Series, months_on_book: pd.Series) -> pd.Series:
+    improvement = 1 + (months_on_book.clip(lower=1) / 120.0)
+    return (current_pd / improvement).clip(0.0001, 0.999)
+
+
+def build_feature_importance(model, df: pd.DataFrame) -> pd.DataFrame:
+    if isinstance(model, WoEScorecard):
+        iv = model.iv_table.loc[model.features]
+        return pd.DataFrame({"feature": iv.index, "importance": iv.values}).reset_index(drop=True)
+    prep, step = model.named_steps["prep"], model.named_steps["model"]
+    names = prep.get_feature_names_out()
+    if hasattr(step, "coef_"):
+        raw = np.abs(step.coef_[0])
+    elif hasattr(step, "feature_importances_"):
+        raw = step.feature_importances_
+    else:
+        raw = np.zeros(len(names))
+    return pd.DataFrame({"feature": names, "importance": raw}).sort_values("importance", ascending=False).head(15).reset_index(drop=True)
