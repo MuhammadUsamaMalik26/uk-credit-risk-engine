@@ -1,9 +1,26 @@
-"""PD Scorecard & Model Validation.
-
-Champion: WoE logistic regression scorecard with monotonic binning, information
-value feature selection and points-to-double-odds scaling. Challengers include
-raw-feature logistic regression, random forest and gradient boosting.
 """
+PD Scorecard & Model Validation
+===============================
+Champion: WoE logistic regression scorecard
+  - Monotonic fine/coarse binning -> Weight of Evidence (WoE)
+  - Information Value (IV) feature selection (IV > 0.5 flagged for leakage review)
+  - Logistic regression with NO class weighting -> PDs calibrated to observed default rates
+  - Points-to-Double-Odds (PDO) scaling: 600 points at 50:1 odds, PDO = 20
+
+Challengers: Logistic Regression (raw features), Random Forest, Gradient Boosting
+
+Validation: out-of-time (OOT) split on origination_date; AUC, Gini, KS, Brier,
+PSI (score stability) and decile calibration tables.
+
+Feature policy
+--------------
+This PD feeds IFRS 9 staging on a live book, so behavioural fields
+(current_balance, months_on_book) are legitimate inputs (behavioural PD).
+Lender-assigned risk fields (grade_band, interest_rate) are excluded from the
+scorecard to avoid circularity; delinquency fields (days_past_due,
+missed_payments) are excluded to avoid target leakage.
+"""
+
 from __future__ import annotations
 
 import time
@@ -19,12 +36,20 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 EPS = 1e-6
-NUMERIC_FEATURES = ["loan_amount", "current_balance", "term_months", "months_on_book",
-                    "interest_rate", "annual_income", "debt_to_income", "credit_score"]
+
+NUMERIC_FEATURES = [
+    "loan_amount", "current_balance", "term_months", "months_on_book", "interest_rate",
+    "annual_income", "debt_to_income", "credit_score",
+]
 CATEGORICAL_FEATURES = ["grade_band", "home_ownership", "purpose"]
+
+# Scorecard excludes lender-assigned risk fields (circular)
 SCORECARD_EXCLUDE = {"interest_rate", "grade_band", "rate_minus_score"}
 
 
+# --------------------------------------------------------------------------- #
+# Feature engineering (shared)
+# --------------------------------------------------------------------------- #
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["utilization_proxy"] = (out["current_balance"] / out["loan_amount"]).clip(0, 1.5)
@@ -41,6 +66,9 @@ def get_feature_columns(df: pd.DataFrame):
     return engineered, numeric, categorical
 
 
+# --------------------------------------------------------------------------- #
+# Binning / WoE / IV
+# --------------------------------------------------------------------------- #
 def _woe_table(bins: pd.Series, y: pd.Series) -> pd.DataFrame:
     t = pd.DataFrame({"bin": bins, "y": y}).groupby("bin", observed=True)["y"].agg(["count", "sum"])
     t.columns = ["n", "bad"]
@@ -55,6 +83,7 @@ def _woe_table(bins: pd.Series, y: pd.Series) -> pd.DataFrame:
 
 
 def _monotonic_edges(x: pd.Series, y: pd.Series, max_bins: int = 10, min_share: float = 0.05):
+    """Quantile fine-classing, then merge adjacent bins until the bad rate is monotonic."""
     qs = np.unique(np.nanquantile(x, np.linspace(0, 1, max_bins + 1)))
     edges = [-np.inf] + list(qs[1:-1]) + [np.inf]
     while len(edges) > 2:
@@ -91,8 +120,7 @@ class WoEBinner:
             rare = set(share[share < self.min_cat_share].index)
             x = x.where(~x.isin(rare), "OTHER")
             t = _woe_table(x, y)
-            self.spec[c] = {"type": "cat", "rare": rare, "table": t,
-                            "map": dict(zip(t.index, t["woe"]))}
+            self.spec[c] = {"type": "cat", "rare": rare, "table": t, "map": dict(zip(t.index, t["woe"]))}
         return self
 
     def iv(self) -> pd.Series:
@@ -112,6 +140,9 @@ class WoEBinner:
         return pd.DataFrame(out, index=X.index)
 
 
+# --------------------------------------------------------------------------- #
+# WoE scorecard (sklearn-style: predict_proba on the raw feature frame)
+# --------------------------------------------------------------------------- #
 class WoEScorecard:
     def __init__(self, base_score=600, base_odds=50, pdo=20, iv_min=0.02, iv_review=0.5):
         self.base_score, self.base_odds, self.pdo = base_score, base_odds, pdo
@@ -127,7 +158,8 @@ class WoEScorecard:
         self.features = self.iv_table[self.iv_table >= self.iv_min].index.tolist()
         self.leakage_review = self.iv_table[self.iv_table > self.iv_review].index.tolist()
         W = self.binner.transform(X, self.features)
-        self.lr = LogisticRegression(max_iter=1000).fit(W, y)
+        self.lr = LogisticRegression(max_iter=1000).fit(W, y)  # no class weighting
+        # WoE = ln(good/bad): every coefficient should be negative when predicting PD
         self.sign_flags = [f for f, b in zip(self.features, self.lr.coef_[0]) if b > 0]
         return self
 
@@ -152,6 +184,9 @@ class WoEScorecard:
         return pd.DataFrame(rows)
 
 
+# --------------------------------------------------------------------------- #
+# Validation metrics
+# --------------------------------------------------------------------------- #
 def ks_statistic(y, p) -> float:
     fpr, tpr, _ = roc_curve(y, p)
     return float(np.max(tpr - fpr))
